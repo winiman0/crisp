@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stain & Defect Detector</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* Pale lilac-white background */
+    --bg: #f1e3ff;
+    --surface: #ffffff;
+    --ink: #1e1a4d;
+    --ink-soft: #5e5a7e;
+    --border: #4d4481;
+    --focus: #d6558e;
+    --primary-dark: #221b53;
+    
+    /* Pink decorative accents */
+    --accent-pink: #f2a6c4;
+    --accent-pink-dark: #e06b9c;
+    --accent-pink-soft: #fbf0f5;
+
+    --radius: 12px;
+    box-sizing: border-box;
+  }
+
+ 
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Atkinson Hyperlegible", Arial, Helvetica, sans-serif;
+    font-size: 18px;
+    line-height: 1.5;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 24px 16px;
+  }
+
+  .skip-link {
+    position: absolute;
+    left: -999px;
+    top: 0;
+    background: var(--focus);
+    color: #fff;
+    padding: 10px 16px;
+    z-index: 100;
+  }
+  .skip-link:focus { left: 0; }
+
+  /* Main Container with subtle pink ambient glow & decorative top line */
+  .app-container {
+    position: relative;
+    width: 100%;
+    max-width: 480px;
+    background: var(--surface);
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px 24px 32px;
+    box-shadow: 
+      0 12px 32px rgba(34, 27, 83, 0.08),
+      0 0 20px rgba(242, 166, 196, 0.25); /* Pink decorative aura */
+    overflow: hidden;
+  }
+
+  /* Pink Decorative Top Accent Bar */
+  .app-container::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 8px;
+    background: linear-gradient(90deg, var(--accent-pink) 0%, var(--border) 100%);
+  }
+
+  /* Header */
+  header.app-header {
+    text-align: center;
+    margin-bottom: 24px;
+    margin-top: 8px;
+  }
+  header.app-header h1 {
+    margin: 0;
+    font-size: 1.85rem;
+    font-weight: 700;
+    color: var(--ink);
+    line-height: 1.25;
+  }
+
+  /* Action Box / Dashed Box with Soft Pink Background Glow */
+  .dashed-box {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 24px 16px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 220px;
+    background: var(--accent-pink-soft);
+    transition: border-color 0.2s ease;
+  }
+
+  .dashed-box h2 {
+    font-size: 1.5rem;
+    margin: 0 0 12px 0;
+    color: var(--ink);
+  }
+
+  /* Camera Icon Trigger */
+  .camera-trigger {
+    border: none;
+    cursor: pointer;
+    padding: 14px;
+    margin-bottom: 14px;
+    transition: transform 0.15s ease, border-color 0.15s ease;
+  }
+  .camera-trigger:hover {
+    transform: scale(1.05);
+   
+  }
+  .camera-trigger:focus-visible {
+    outline: 3px solid var(--focus);
+  }
+  
+  .camera-icon {
+    width: 44px;
+    height: 44px;
+    display: block;
+    stroke: var(--primary-dark);
+  }
+
+  button {
+    font: inherit;
+    cursor: pointer;
+  }
+  button:focus-visible, input:focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  /* Primary Button with Pink Hover Highlight */
+  .btn-pill {
+    background: var(--primary-dark);
+    color: #fff;
+    border: 2px solid var(--primary-dark);
+    padding: 10px 22px;
+    border-radius: 20px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+  }
+  .btn-pill:hover {
+    background: var(--accent-pink-dark);
+    border-color: var(--accent-pink-dark);
+  }
+
+  /* Result Section */
+  .result-section {
+    margin-top: 24px;
+  }
+  .result-label {
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+    color: var(--ink);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  /* Decorative Pink Bullet Dot */
+  .result-label::before {
+    content: "";
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background-color: var(--accent-pink);
+    border-radius: 50%;
+  }
+
+  .result-box {
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    min-height: 110px;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .result-box.placeholder {
+    color: var(--ink-soft);
+  }
+
+  /* Processing Spinner */
+  .dots-spinner {
+    display: inline-grid;
+    grid-template-columns: repeat(3, 12px);
+    gap: 8px;
+    margin-top: 16px;
+  }
+  .dots-spinner span {
+    width: 12px;
+    height: 12px;
+    background-color: var(--accent-pink-dark);
+    border-radius: 50%;
+    animation: pulse 1.2s infinite ease-in-out;
+  }
+  .dots-spinner span:nth-child(2) { animation-delay: 0.2s; }
+  .dots-spinner span:nth-child(3) { animation-delay: 0.4s; }
+
+  @keyframes pulse {
+    0%, 80%, 100% { transform: scale(0.6); opacity: 0.3; }
+    40% { transform: scale(1.1); opacity: 1; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dots-spinner span { animation: none; opacity: 0.8; }
+  }
+
+  /* Result Image Preview */
+  .photo-preview {
+    width: 100%;
+    max-height: 240px;
+    object-fit: cover;
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    display: block;
+  }
+
+  .result-text-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-weight: 700;
+  }
+  .result-text-list li {
+    margin-bottom: 4px;
+  }
+
+  .actions-footer {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .btn-outline {
+    background: transparent;
+    border: 2px solid var(--border);
+    color: var(--ink);
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-weight: 700;
+    flex: 1;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+  }
+  .btn-outline:hover {
+    border-color: var(--accent-pink-dark);
+    background-color: var(--accent-pink-soft);
+  }
+
+  .hidden { display: none !important; }
+  .visually-hidden {
+    position: absolute;
+    width: 1px; height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to main content</a>
+
+<div class="app-container">
+  <header class="app-header">
+    <h1>Stain &amp; Defect<br>Detector</h1>
+  </header>
+
+  <main id="main-content">
+    <input type="file" accept="image/*" capture="environment" id="cameraInput" class="hidden" aria-hidden="true">
+    <input type="file" accept="image/*" id="galleryInput" class="hidden" aria-hidden="true">
+
+    <!-- ============ IDLE STATE ============ -->
+    <section id="state-idle" aria-labelledby="idle-heading">
+      <h2 id="idle-heading" class="visually-hidden">Upload clothing image</h2>
+      <div class="dashed-box">
+        <h2>Take a Picture</h2>
+        <button type="button" class="camera-trigger" id="takePictureBtn" aria-label="Take a picture using camera">
+          <svg class="camera-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+            <circle cx="12" cy="13" r="4"/>
+          </svg>
+        </button>
+        <button type="button" class="btn-pill" id="uploadBtn">
+          Or Upload From Your Gallery
+        </button>
+      </div>
+
+      <div class="result-section">
+        <div class="result-label">RESULT</div>
+        <div class="result-box placeholder">
+          Submit a picture to get a result
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ PROCESSING STATE ============ -->
+    <section id="state-processing" class="hidden" aria-labelledby="processing-heading">
+      <h2 id="processing-heading" class="visually-hidden">Analyzing image</h2>
+      <div class="dashed-box" role="status">
+        <h2>Running....</h2>
+        <div class="dots-spinner" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+
+      <div class="result-section">
+        <div class="result-label">RESULT</div>
+        <div class="result-box placeholder">
+          Processing......
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ RESULT STATE ============ -->
+    <section id="state-result" class="hidden" aria-labelledby="result-heading">
+      <h2 id="result-heading" class="visually-hidden">Analysis Results</h2>
+      
+      <img id="resultPhoto" class="photo-preview" alt="Submitted garment preview">
+
+      <div class="result-section">
+        <div class="result-label">RESULT:</div>
+        <div class="result-box" id="resultBox" aria-live="polite">
+          <!-- Populated by JavaScript -->
+        </div>
+      </div>
+
+      <div class="actions-footer">
+        <button type="button" class="btn-outline" id="speakBtn"> Read aloud</button>
+        <button type="button" class="btn-outline" id="tryAgainBtn">Check another</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var stateIdle = document.getElementById("state-idle");
+  var stateProcessing = document.getElementById("state-processing");
+  var stateResult = document.getElementById("state-result");
+
+  var takePictureBtn = document.getElementById("takePictureBtn");
+  var uploadBtn = document.getElementById("uploadBtn");
+  var cameraInput = document.getElementById("cameraInput");
+  var galleryInput = document.getElementById("galleryInput");
+  var tryAgainBtn = document.getElementById("tryAgainBtn");
+  var speakBtn = document.getElementById("speakBtn");
+
+  var resultPhoto = document.getElementById("resultPhoto");
+  var resultBox = document.getElementById("resultBox");
+
+  function showState(el) {
+    [stateIdle, stateProcessing, stateResult].forEach(function (s) {
+      s.classList.add("hidden");
+    });
+    el.classList.remove("hidden");
+  }
+
+  takePictureBtn.addEventListener("click", function () { cameraInput.click(); });
+  uploadBtn.addEventListener("click", function () { galleryInput.click(); });
+
+  cameraInput.addEventListener("change", handleFile);
+  galleryInput.addEventListener("change", handleFile);
+
+  function handleFile(evt) {
+    var file = evt.target.files && evt.target.files[0];
+    if (!file) return;
+
+    var objectUrl = URL.createObjectURL(file);
+    resultPhoto.src = objectUrl;
+
+    showState(stateProcessing);
+
+    window.setTimeout(function () {
+      runDemoClassification();
+      showState(stateResult);
+    }, 1500);
+  }
+
+  var demoOutcomes = [
+    { garment: "Shirt", status: "Clean", confidence: 98 },
+    { garment: "Shirt", status: "Stain detected", confidence: 91 },
+    { garment: "Trousers", status: "Defect detected", confidence: 87 }
+  ];
+
+  var lastSpokenText = "";
+
+  function runDemoClassification() {
+    var outcome = demoOutcomes[Math.floor(Math.random() * demoOutcomes.length)];
+
+    resultBox.innerHTML =
+      '<ul class="result-text-list">' +
+        '<li>' + outcome.garment + ' detected</li>' +
+        '<li>Status: ' + outcome.status + '</li>' +
+        '<li>Confidence: ' + outcome.confidence + '%</li>' +
+      '</ul>';
+
+    lastSpokenText = outcome.garment + " detected. Status: " + outcome.status + ". Confidence: " + outcome.confidence + " percent.";
+  }
+
+  tryAgainBtn.addEventListener("click", function () {
+    cameraInput.value = "";
+    galleryInput.value = "";
+    showState(stateIdle);
+  });
+
+  speakBtn.addEventListener("click", function () {
+    if (!("speechSynthesis" in window) || !lastSpokenText) return;
+    var utterance = new SpeechSynthesisUtterance(lastSpokenText);
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+  });
+})();
+</script>
+
+</body>
+</html>

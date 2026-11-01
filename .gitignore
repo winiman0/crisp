@@ -1,0 +1,18 @@
+# Virtual Environment
+menv/
+
+# Dataset & Heavy Files
+dataset/
+src/dataset/
+*.zip
+*.tar.gz
+*.h5
+*.pth
+*.onnx
+*.png
+*.jpg
+*.jpeg
+
+# Python Cache
+__pycache__/
+*.pyc

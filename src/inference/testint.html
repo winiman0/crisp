@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stain & Defect Detector</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="int.css">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to main content</a>
+
+<div class="app-container">
+  <header class="app-header">
+    <h1>Stain &amp; Defect<br>Detector</h1>
+  </header>
+
+  <main id="main-content">
+    <input type="file" accept="image/*" capture="environment" id="cameraInput" class="hidden" aria-hidden="true">
+    <input type="file" accept="image/*" id="galleryInput" class="hidden" aria-hidden="true">
+    <canvas id="captureCanvas" class="hidden"></canvas>
+
+    <!-- ============ IDLE STATE ============ -->
+    <section id="state-idle" aria-labelledby="idle-heading">
+      <h2 id="idle-heading" class="visually-hidden">Upload clothing image</h2>
+      
+      <div id="defaultIdleUI" class="dashed-box">
+        <h2>Take a Picture</h2>
+        <button type="button" class="camera-trigger" id="takePictureBtn" aria-label="Take a picture using camera">
+          <svg class="camera-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+            <circle cx="12" cy="13" r="4"/>
+          </svg>
+        </button>
+        <button type="button" class="btn-pill" id="uploadBtn">
+          Or Upload From Your Gallery
+        </button>
+      </div>
+
+      <!-- Live Web Camera UI -->
+      <div id="liveCameraUI" class="camera-view-container hidden">
+        <div class="camera-select-wrapper">
+          <label for="cameraSelect" class="camera-select-label">Choose Camera Source:</label>
+          <select id="cameraSelect" class="camera-select" aria-label="Select active camera device">
+            <option value="">Searching for cameras...</option>
+          </select>
+        </div>
+
+        <video id="webcam" autoplay playsinline muted></video>
+
+        <div class="camera-btn-group">
+          <button type="button" class="btn-pill" id="snapBtn">📸 Take Photo</button>
+          <button type="button" class="btn-outline" id="cancelCamBtn">Cancel</button>
+        </div>
+      </div>
+
+      <div class="result-section">
+        <div class="result-label">RESULT</div>
+        <div class="result-box placeholder">
+          Submit a picture to get a result
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ PROCESSING STATE ============ -->
+    <section id="state-processing" class="hidden" aria-labelledby="processing-heading">
+      <h2 id="processing-heading" class="visually-hidden">Analyzing image</h2>
+      <div class="dashed-box" role="status">
+        <h2>Running....</h2>
+        <div class="dots-spinner" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+
+      <div class="result-section">
+        <div class="result-label">RESULT</div>
+        <div class="result-box placeholder">
+          Processing......
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ RESULT STATE ============ -->
+    <section id="state-result" class="hidden" aria-labelledby="result-heading">
+      <h2 id="result-heading" class="visually-hidden">Analysis Results</h2>
+      
+      <img id="resultPhoto" class="photo-preview" alt="Submitted garment preview">
+
+      <div class="result-section">
+        <div class="result-label">RESULT:</div>
+        <div class="result-box" id="resultBox" aria-live="polite">
+          <!-- Populated by JavaScript -->
+        </div>
+      </div>
+
+      <div class="actions-footer">
+        <button type="button" class="btn-outline" id="speakBtn">🔊 Read aloud</button>
+        <button type="button" class="btn-outline" id="tryAgainBtn">Check another</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var stateIdle = document.getElementById("state-idle");
+  var stateProcessing = document.getElementById("state-processing");
+  var stateResult = document.getElementById("state-result");
+
+  var takePictureBtn = document.getElementById("takePictureBtn");
+  var uploadBtn = document.getElementById("uploadBtn");
+  var cameraInput = document.getElementById("cameraInput");
+  var galleryInput = document.getElementById("galleryInput");
+  var tryAgainBtn = document.getElementById("tryAgainBtn");
+  var speakBtn = document.getElementById("speakBtn");
+
+  var defaultIdleUI = document.getElementById("defaultIdleUI");
+  var liveCameraUI = document.getElementById("liveCameraUI");
+  var cameraSelect = document.getElementById("cameraSelect");
+  var webcam = document.getElementById("webcam");
+  var snapBtn = document.getElementById("snapBtn");
+  var cancelCamBtn = document.getElementById("cancelCamBtn");
+  var captureCanvas = document.getElementById("captureCanvas");
+
+  var resultPhoto = document.getElementById("resultPhoto");
+  var resultBox = document.getElementById("resultBox");
+  var mediaStream = null;
+
+  function showState(el) {
+    stopWebcam();
+    [stateIdle, stateProcessing, stateResult].forEach(function (s) {
+      s.classList.add("hidden");
+    });
+    el.classList.remove("hidden");
+  }
+
+  takePictureBtn.addEventListener("click", function () {
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      startCameraStream();
+    } else {
+      cameraInput.click();
+    }
+  });
+
+  uploadBtn.addEventListener("click", function () { galleryInput.click(); });
+  cancelCamBtn.addEventListener("click", stopWebcam);
+
+  cameraInput.addEventListener("change", handleFile);
+  galleryInput.addEventListener("change", handleFile);
+
+  // Automatically update camera options if a device is plugged/unplugged
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener("devicechange", populateCameraList);
+  }
+
+  function startCameraStream(deviceId) {
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(function (track) { track.stop(); });
+    }
+
+    // Generic constraint without facingMode restriction to allow virtual cameras (e.g., Iriun Webcam)
+    var constraints = {
+      video: deviceId ? { deviceId: { exact: deviceId } } : true
+    };
+
+    navigator.mediaDevices.getUserMedia(constraints)
+      .then(function (stream) {
+        mediaStream = stream;
+        webcam.srcObject = stream;
+        defaultIdleUI.classList.add("hidden");
+        liveCameraUI.classList.remove("hidden");
+        
+        // Re-populate list once permission is granted so device names load
+        populateCameraList();
+      })
+      .catch(function (err) {
+        console.warn("Camera stream error, launching native camera picker:", err);
+        stopWebcam();
+        cameraInput.click();
+      });
+  }
+
+  function populateCameraList() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+
+    navigator.mediaDevices.enumerateDevices().then(function (devices) {
+      var videoDevices = devices.filter(function (device) {
+        return device.kind === "videoinput";
+      });
+
+      cameraSelect.innerHTML = "";
+
+      var activeTrack = mediaStream ? mediaStream.getVideoTracks()[0] : null;
+      var activeDeviceId = activeTrack ? activeTrack.getSettings().deviceId : "";
+
+      videoDevices.forEach(function (device, index) {
+        var option = document.createElement("option");
+        option.value = device.deviceId;
+        option.text = device.label || ("Camera " + (index + 1));
+        
+        if (device.deviceId === activeDeviceId) {
+          option.selected = true;
+        }
+        cameraSelect.appendChild(option);
+      });
+
+      // System Fallback option inside dropdown
+      var fallbackOption = document.createElement("option");
+      fallbackOption.value = "__NATIVE_PICKER__";
+      fallbackOption.text = " Open System Camera / File Chooser";
+      cameraSelect.appendChild(fallbackOption);
+    });
+  }
+
+  cameraSelect.addEventListener("change", function () {
+    var selectedValue = cameraSelect.value;
+    if (selectedValue === "__NATIVE_PICKER__") {
+      stopWebcam();
+      cameraInput.click();
+    } else if (selectedValue) {
+      startCameraStream(selectedValue);
+    }
+  });
+
+  function stopWebcam() {
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(function (track) { track.stop(); });
+      mediaStream = null;
+    }
+    liveCameraUI.classList.add("hidden");
+    defaultIdleUI.classList.remove("hidden");
+  }
+
+  snapBtn.addEventListener("click", function () {
+    var context = captureCanvas.getContext("2d");
+    captureCanvas.width = webcam.videoWidth || 640;
+    captureCanvas.height = webcam.videoHeight || 480;
+    context.drawImage(webcam, 0, 0, captureCanvas.width, captureCanvas.height);
+    
+    var dataUrl = captureCanvas.toDataURL("image/jpeg");
+    resultPhoto.src = dataUrl;
+    
+    stopWebcam();
+    processPhoto();
+  });
+
+  function handleFile(evt) {
+    var file = evt.target.files && evt.target.files[0];
+    if (!file) return;
+
+    var objectUrl = URL.createObjectURL(file);
+    resultPhoto.src = objectUrl;
+    processPhoto();
+  }
+
+  function processPhoto() {
+    showState(stateProcessing);
+
+    window.setTimeout(function () {
+      runDemoClassification();
+      showState(stateResult);
+      speakResult();
+    }, 1500);
+  }
+
+  var demoOutcomes = [
+    { garment: "Shirt", status: "Clean", confidence: 98 },
+    { garment: "Shirt", status: "Stain detected", confidence: 91 },
+    { garment: "Trousers", status: "Defect detected", confidence: 87 }
+  ];
+
+  var lastSpokenText = "";
+
+  function runDemoClassification() {
+    var outcome = demoOutcomes[Math.floor(Math.random() * demoOutcomes.length)];
+
+    resultBox.innerHTML =
+      '<ul class="result-text-list">' +
+        '<li>' + outcome.garment + ' detected</li>' +
+        '<li>Status: ' + outcome.status + '</li>' +
+        '<li>Confidence: ' + outcome.confidence + '%</li>' +
+      '</ul>';
+
+    lastSpokenText = outcome.garment + " detected. Status: " + outcome.status + ". Confidence: " + outcome.confidence + " percent.";
+  }
+
+  function speakResult() {
+    if (!("speechSynthesis" in window) || !lastSpokenText) return;
+    var utterance = new SpeechSynthesisUtterance(lastSpokenText);
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+  }
+
+  tryAgainBtn.addEventListener("click", function () {
+    cameraInput.value = "";
+    galleryInput.value = "";
+    showState(stateIdle);
+  });
+
+  speakBtn.addEventListener("click", speakResult);
+})();
+</script>
+
+</body>
+</html>
