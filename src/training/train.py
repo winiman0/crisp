@@ -11,7 +11,7 @@ from src.dataset.attributemanage import SELECTED_ATTRIBUTES
 
 EPOCHS = 20
 LEARNING_RATE = 0.0001
-STEPS_PER_EPOCH = 150
+STEPS_PER_EPOCH = 500
 VALIDATION_STEPS = 20
 NUM_ATTRIBUTES = len(SELECTED_ATTRIBUTES)
 
@@ -66,51 +66,59 @@ CONDITION_CLASS_WEIGHTS = tf.constant(
 )
 
 
-def weighted_binary_crossentropy(y_true, y_pred, pos_weight, epsilon=1e-7):
+def weighted_binary_crossentropy(y_true, y_pred, pos_weight, mask=None, epsilon=1e-7):
     """
     Manual weighted binary cross-entropy (no built-in pos_weight loss class,
-    to stay consistent with the no-built-in-tools rule).
+    to stay consistent with the no-built-in-tools rule), with a mask.
 
     Standard weighted BCE formula:
         loss = -[pos_weight * y * log(p) + (1 - y) * log(1 - p)]
 
     pos_weight is a length-26 vector, one value per attribute. For a rare
-    attribute (e.g. "scoop-neck" at 0.06% positive), pos_weight is large,
-    so the model is penalized heavily for missing the few real positives —
-    this is what stops it from collapsing to "always predict absent."
+    attribute, pos_weight is large, so the model is penalized heavily for
+    missing the few real positives; this is what stops it from collapsing to
+    "always predict absent."
+
+    mask has the same shape as the labels. 1 = this label is known for this
+    image, 0 = unknown, so it adds nothing to the loss. Fashionpedia images
+    only know collar, pocket and zipper; DeepFashion images know all 26.
+    The loss is averaged over the KNOWN labels only. With no mask (validation)
+    every label counts, which gives the same value as before.
     """
+    if mask is None:
+        mask = tf.ones_like(y_true)
+
     y_pred = tf.clip_by_value(y_pred, epsilon, 1.0 - epsilon)
     loss = -(
         pos_weight * y_true * tf.math.log(y_pred) +
         (1.0 - y_true) * tf.math.log(1.0 - y_pred)
     )
-    return tf.reduce_mean(loss)
+
+    loss = loss * mask
+
+    return tf.reduce_sum(loss) / tf.maximum(tf.reduce_sum(mask), 1.0)
 
 
-def compute_attribute_pos_weights(attribute_dataset, num_attributes, cap=20.0):
+def compute_attribute_pos_weights(positives, labelled, cap=20.0):
     """
-    Counts positive/negative occurrences of each attribute across the
-    (non-repeated) training dataset, then computes:
+    Turns the label counts (made in trainpre2.py) into one weight per
+    attribute:
 
         pos_weight = negative_count / positive_count
 
-    capped at `cap` to avoid extreme weights for ultra-rare attributes
-    (e.g. "scoop-neck" at 0.06% would otherwise get a weight over 1500,
-    which risks destabilizing training) — this is the standard trade-off:
-    enough weight to stop the collapse-to-zero shortcut, not so much that
-    a handful of rare examples dominate every gradient step.
+    where negative_count = labelled - positives. "labelled" only counts the
+    images that actually give an answer for that attribute, so Fashionpedia
+    images do not count as negatives for attributes they say nothing about.
+
+    The weight is capped at `cap` so a handful of rare examples cannot
+    dominate every gradient step.
     """
-    positive_counts = tf.zeros(num_attributes, dtype=tf.float32)
-    total = 0
+    positives = tf.maximum(tf.constant(positives, dtype=tf.float32), 1.0)
+    labelled = tf.constant(labelled, dtype=tf.float32)
 
-    for _, labels in attribute_dataset:
-        positive_counts += tf.reduce_sum(labels, axis=0)
-        total += labels.shape[0]
+    negatives = labelled - positives
 
-    positive_counts = tf.maximum(positive_counts, 1.0)  # avoid divide-by-zero
-    negative_counts = total - positive_counts
-
-    pos_weight = negative_counts / positive_counts
+    pos_weight = negatives / positives
     pos_weight = tf.clip_by_value(pos_weight, 1.0, cap)
 
     print("\nAttribute positive-class weights (capped at {:.0f}):".format(cap))
@@ -131,6 +139,7 @@ def train_step(
     optimizer,
     attribute_images,
     attribute_labels,
+    attribute_mask,
     condition_images,
     condition_labels,
     attribute_pos_weight
@@ -146,7 +155,8 @@ def train_step(
 
         attribute_predictions = attribute_model(attribute_images, training=True)
         attribute_loss = weighted_binary_crossentropy(
-            attribute_labels, attribute_predictions, attribute_pos_weight
+            attribute_labels, attribute_predictions, attribute_pos_weight,
+            mask=attribute_mask
         )
 
         condition_predictions = condition_model(condition_images, training=True)
@@ -249,17 +259,19 @@ def train_model():
         condition_train_ds,
         condition_val_ds,
         attribute_train_ds,
-        attribute_val_ds
-    ) = prepare_training_data()
+        attribute_val_ds,
+        attribute_counts
+    ) = prepare_training_data(for_training=True)
     print("Training datasets loaded.")
 
     # --------------------------------------------------------
-    # Compute attribute positive-class weights BEFORE repeating
-    # the dataset (repeat() would make this loop forever).
+    # Attribute positive-class weights, from the label counts that
+    # trainpre2.py made (no need to loop over every image any more).
     # --------------------------------------------------------
     print("\nComputing attribute class weights...")
+    positives, labelled = attribute_counts
     attribute_pos_weight = compute_attribute_pos_weights(
-        attribute_train_ds, NUM_ATTRIBUTES, cap=ATTRIBUTE_POS_WEIGHT_CAP
+        positives, labelled, cap=ATTRIBUTE_POS_WEIGHT_CAP
     )
 
     print("\nBuilding CNN model...")
@@ -299,12 +311,12 @@ def train_model():
         total_losses = []
 
         for step in range(STEPS_PER_EPOCH):
-            attribute_images, attribute_labels = next(attribute_iterator)
+            attribute_images, attribute_labels, attribute_mask = next(attribute_iterator)
             condition_images, condition_labels = next(condition_iterator)
 
             attribute_loss, condition_loss, total_loss = train_step(
                 model, attribute_model, condition_model, optimizer,
-                attribute_images, attribute_labels,
+                attribute_images, attribute_labels, attribute_mask,
                 condition_images, condition_labels,
                 attribute_pos_weight
             )

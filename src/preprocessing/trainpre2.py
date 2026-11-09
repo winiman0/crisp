@@ -1,6 +1,12 @@
 import os
+import numpy as np
 import tensorflow as tf
 
+from src.dataset.fashionpedia import (
+    build_fashionpedia_records,
+    TRAIN_ANNOTATIONS as FASHIONPEDIA_TRAIN_ANNOTATIONS,
+    TRAIN_IMAGES as FASHIONPEDIA_TRAIN_IMAGES,
+)
 from src.dataset.attributemanage import (
     ATTRIBUTE_DEFINITION_FILE,
     IMAGE_ATTRIBUTE_FILE,
@@ -21,6 +27,16 @@ BATCH_SIZE = 32
 CONDITION_CLASSES = ["clean", "stain", "defect"]
 
 CONDITION_DATASET = r"C:\Users\User\crisp\dataset\relabeled_cond"
+
+# Fashionpedia adds cleaner labels for collar, pocket and zipper.
+# Set USE_FASHIONPEDIA = False to train on DeepFashion only, as before.
+USE_FASHIONPEDIA = True
+
+# How many times the Fashionpedia images are added to the training list.
+# 2 means each Fashionpedia image appears twice per pass, which gives the
+# three part labels a bigger share of every batch (DeepFashion has ~108k
+# balanced images; Fashionpedia has ~45k).
+FASHIONPEDIA_COPIES = 2
 
 
 # ============================================================
@@ -241,34 +257,53 @@ def build_attribute_records():
 def build_attribute_dataset(
     records,
     training=True,
-    batch_size=BATCH_SIZE
+    batch_size=BATCH_SIZE,
+    with_mask=False
 ):
     """
     Build the TensorFlow dataset for garment attributes.
+
+    with_mask=False : records are (path, labels)        -> batches of (image, labels)
+    with_mask=True  : records are (path, labels, mask)  -> batches of (image, labels, mask)
+
+    The mask says which of the 26 label slots are really known for an image.
+    Training uses it (DeepFashion + Fashionpedia). Validation does not.
     """
 
-    image_paths = [
-        record[0]
-        for record in records
-    ]
+    image_paths = [record[0] for record in records]
+    labels = [record[1] for record in records]
 
-    labels = [
-        record[1]
-        for record in records
-    ]
+    if with_mask:
 
-    dataset = tf.data.Dataset.from_tensor_slices(
-        (image_paths, labels)
-    )
+        masks = [record[2] for record in records]
 
-    def load_attribute_image(image_path, label):
+        dataset = tf.data.Dataset.from_tensor_slices(
+            (image_paths, labels, masks)
+        )
 
-        image = preprocess_image(image_path)
+        def load_attribute_image(image_path, label, mask):
 
-        if training:
-            image = augment_image(image)
+            image = preprocess_image(image_path)
 
-        return image, label
+            if training:
+                image = augment_image(image)
+
+            return image, label, mask
+
+    else:
+
+        dataset = tf.data.Dataset.from_tensor_slices(
+            (image_paths, labels)
+        )
+
+        def load_attribute_image(image_path, label):
+
+            image = preprocess_image(image_path)
+
+            if training:
+                image = augment_image(image)
+
+            return image, label
 
     dataset = dataset.map(
         load_attribute_image,
@@ -340,6 +375,53 @@ def balance_attribute_records(records, negatives_per_positive=1.0):
 
 
 # ============================================================
+# MASK HELPERS
+# ============================================================
+
+def add_full_mask(records):
+    """
+    DeepFashion labels every one of the 26 attributes, so every slot is known:
+    the mask is all ones.
+    """
+    full_mask = [1.0] * len(SELECTED_ATTRIBUTES)
+
+    return [
+        (path, labels, list(full_mask))
+        for path, labels in records
+    ]
+
+
+def mix_records(records):
+    """
+    Shuffle the combined DeepFashion + Fashionpedia list, so the early
+    batches are not all from one dataset.
+    """
+    order = tf.random.shuffle(
+        tf.range(len(records))
+    ).numpy()
+
+    return [records[i] for i in order]
+
+
+def count_attribute_labels(records):
+    """
+    For every attribute, count:
+      positives : how many images are marked as having it
+      labelled  : how many images actually give an answer for it (mask = 1)
+
+    train.py turns these into the positive-class weights. Counting from the
+    list is much faster than looping over all the images.
+    """
+    labels = np.array([record[1] for record in records], dtype=np.float32)
+    masks = np.array([record[2] for record in records], dtype=np.float32)
+
+    positives = (labels * masks).sum(axis=0)
+    labelled = masks.sum(axis=0)
+
+    return positives.tolist(), labelled.tolist()
+
+
+# ============================================================
 # TRAINING / VALIDATION SPLIT
 # ============================================================
 
@@ -389,7 +471,19 @@ def split_dataset(
 # BUILD ALL TRAINING DATA
 # ============================================================
 
-def prepare_training_data():
+def prepare_training_data(for_training=False):
+    """
+    for_training=False (default, used by evaluate.py):
+        DeepFashion only. Returns 4 values:
+        (condition_train, condition_validation,
+         attribute_train, attribute_validation)
+        and the attribute batches are (image, labels).
+
+    for_training=True (used by train.py):
+        Also adds the Fashionpedia records. Returns 5 values: the same 4
+        plus (positives, labelled) counts for the class weights, and the
+        attribute training batches are (image, labels, mask).
+    """
 
     print("\nPreparing fabric condition dataset...")
 
@@ -468,14 +562,40 @@ def prepare_training_data():
         )
     )
 
-    # Balance the TRAINING records only (validation stays natural)
+    # Balance the DeepFashion TRAINING records only (validation stays natural)
     attribute_train_records = balance_attribute_records(
+        attribute_train_records
+    )
+
+    # Every DeepFashion label slot is known
+    attribute_train_records = add_full_mask(
+        attribute_train_records
+    )
+
+    # Add Fashionpedia (collar / pocket / zipper only, the rest masked out).
+    # Only when training, so evaluating does not reload the big file.
+    if for_training and USE_FASHIONPEDIA:
+
+        print("\nAdding Fashionpedia attribute records...")
+
+        fashionpedia_records = build_fashionpedia_records(
+            FASHIONPEDIA_TRAIN_ANNOTATIONS,
+            FASHIONPEDIA_TRAIN_IMAGES
+        )
+
+        attribute_train_records = mix_records(
+            attribute_train_records
+            + fashionpedia_records * FASHIONPEDIA_COPIES
+        )
+
+    attribute_counts = count_attribute_labels(
         attribute_train_records
     )
 
     attribute_train = build_attribute_dataset(
         attribute_train_records,
-        training=True
+        training=True,
+        with_mask=for_training
     )
 
     attribute_validation = build_attribute_dataset(
@@ -494,6 +614,15 @@ def prepare_training_data():
     )
 
 
+    if for_training:
+        return (
+            condition_train,
+            condition_validation,
+            attribute_train,
+            attribute_validation,
+            attribute_counts
+        )
+
     return (
         condition_train,
         condition_validation,
@@ -507,12 +636,15 @@ if __name__ == "__main__":
     print("\nTraining Data Pipeline")
     print("=" * 55)
 
+    # for_training=True is the same call train.py makes, so this checks the
+    # real training pipeline (DeepFashion + Fashionpedia + masks).
     (
         condition_train,
         condition_validation,
         attribute_train,
-        attribute_validation
-    ) = prepare_training_data()
+        attribute_validation,
+        attribute_counts
+    ) = prepare_training_data(for_training=True)
 
 
     print("\nChecking condition")
@@ -534,7 +666,7 @@ if __name__ == "__main__":
 
     print("\nChecking attribute")
 
-    attribute_images, attribute_labels = next(
+    attribute_images, attribute_labels, attribute_mask = next(
         iter(attribute_train)
     )
 
@@ -546,6 +678,11 @@ if __name__ == "__main__":
     print(
         "Attribute labels:",
         attribute_labels.shape
+    )
+
+    print(
+        "Attribute mask:",
+        attribute_mask.shape
     )
 
 

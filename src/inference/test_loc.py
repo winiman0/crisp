@@ -5,7 +5,7 @@ Run:  python -m src.inference.test "C:\path\to\photo.jpg"
 import sys
 import tensorflow as tf
 
-from src.preprocessing.trainpre import preprocess_image
+from src.preprocessing.trainpre2 import preprocess_image
 from src.dataset.attributemanage import SELECTED_ATTRIBUTES
 from src.inference.stain_location import build_gradcam_model, analyse_image
 
