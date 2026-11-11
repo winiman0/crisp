@@ -3,7 +3,6 @@ menv/
 
 # Dataset & Heavy Files
 dataset/
-src/dataset/
 *.zip
 *.tar.gz
 *.h5
