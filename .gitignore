@@ -2,7 +2,7 @@
 menv/
 
 # Dataset & Heavy Files
-dataset/
+/dataset/
 *.zip
 *.tar.gz
 *.h5
